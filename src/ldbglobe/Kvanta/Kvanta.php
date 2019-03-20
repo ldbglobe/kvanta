@@ -45,9 +45,15 @@ class Kvanta {
 		
 	}
 
-	public function load($code)
+	public function load($code,$limit=null,$periodicity=null)
 	{
 		$service = new \ldbglobe\Kvanta\Kvanta_Services($this,$code);
+		if($service->ready())
+			return $service;
+
+		if($limit && $periodicity)
+			$service = $this->create($code,$limit,$periodicity);
+
 		if($service->ready())
 			return $service;
 
@@ -65,7 +71,8 @@ class Kvanta {
 			`periodicity`=:_periodicity,
 			`cdate`=NOW(),
 			`mdate`=NOW(),
-			`active`=:_active
+			`active`=:_active,
+			`history`=\"\"
 		;");
 		$db_statement->execute(array(
 			'_code'=>$code,
@@ -80,12 +87,12 @@ class Kvanta {
 	{
 		try {
 			$result = $this->db_handler->query("SELECT 1 FROM `${table_name}` LIMIT 1");
-		} catch (Exception $e) {
+			// Result is either boolean FALSE (no table found) or PDOStatement Object (table found)
+			return $result !== FALSE;
+		} catch (\Exception $e) {
 			// We got an exception == table not found
 			return FALSE;
 		}
-		// Result is either boolean FALSE (no table found) or PDOStatement Object (table found)
-		return $result !== FALSE;
 	}
 }
 
@@ -119,7 +126,7 @@ class Kvanta_Services {
 		$code = $this->code;
 		try {
 			$result = $this->_db_handler()->query("SELECT * FROM `${env_name}_services` WHERE `code`=\"${code}\"");
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			$result = FALSE;
 		}
 		if($result)
@@ -161,8 +168,9 @@ class Kvanta_Services {
 				'_code'=>$code
 			));
 			$this->init();
+			$this->clearHistory();
 			return true;
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			return false;
 		}
 	}
@@ -177,8 +185,9 @@ class Kvanta_Services {
 				'_code'=>$code
 			));
 			$this->init();
+			$this->clearHistory();
 			return true;
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			return false;
 		}
 	}
@@ -195,7 +204,7 @@ class Kvanta_Services {
 				'_code'=>$code
 			));
 			return true;
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			return false;
 		}
 	}
@@ -212,7 +221,7 @@ class Kvanta_Services {
 				'_code'=>$code
 			));
 			return true;
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			return false;
 		}
 	}
@@ -227,7 +236,7 @@ class Kvanta_Services {
 				'_code'=>$code
 			));
 			return true;
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			return false;
 		}
 	}
@@ -264,6 +273,15 @@ class Kvanta_Services {
 		return array($from,$to);
 	}
 
+	public function getRemainingQuota()
+	{
+		$quota = $this->getQuota();
+		if($quota && isset($quota->transaction_balance))
+		{
+			return $this->getLimit() + $quota->transaction_balance;
+		}
+	}
+
 	public function getQuota($index=0)
 	{
 		// return current quota based on default limit, periodicity and processed transactions during the current period
@@ -283,6 +301,7 @@ class Kvanta_Services {
 		$env_name = $this->_env_name();
 		$code = $this->code;
 
+		$periodicity = $this->getPeriodicity();
 		$limit = $limit = $this->getLimit();
 		$credits = 0;
 		$credits_count = 0;
@@ -314,13 +333,32 @@ class Kvanta_Services {
 				$debits = abs($data->debits ? $data->debits : 0);
 				$debits_count = abs($data->debits_count ? $data->debits_count : 0);
 			}
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			// nothing to do
 		}
 
-		return array(
+		$humanized_period = '';
+		switch($periodicity) { //yearly, monthly, daily, hourly
+			case 'hourly':
+				$humanized_period = date('H\h (Y-m-d)',strtotime($period[0]));
+				break;
+			case 'daily':
+				$humanized_period = date('Y-m-d',strtotime($period[0]));
+				break;
+			case 'monthly':
+				$humanized_period = date('Y-m',strtotime($period[0]));
+				break;
+			case 'yearly':
+				$humanized_period = date('Y-m',strtotime($period[0])).' / '.date('Y-m',strtotime($period[1]));
+				break;
+			default:
+				break;
+		}
+
+		return (object)array(
 			'from'=>$period[0],
 			'to'=>$period[1],
+			'humanized_period'=>$humanized_period,
 			'credits'=>$credits,
 			'credits_count'=>$credits_count,
 			'debits'=>$debits,
@@ -348,10 +386,11 @@ class Kvanta_Services {
 				$data = $db_statement->fetchObject();
 				$history = isset($data->history) ? json_decode($data->history) : FALSE;
 				$history = $history ? $history : $this->buildHistory();
+
 			}
 			return $history;
 
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			return false;
 		}
 	}
@@ -392,7 +431,7 @@ class Kvanta_Services {
 				'_code'=>$code
 			));
 			return $history;
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			return false;
 		}
 	}
@@ -407,7 +446,7 @@ class Kvanta_Services {
 				'_code'=>$code
 			));
 			return true;
-		} catch (Exception $e) {
+		} catch (\Exception $e) {
 			return false;
 		}
 	}
