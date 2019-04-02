@@ -280,7 +280,27 @@ class Kvanta_Services {
 		{
 			return $this->getLimit() + $quota->transaction_balance;
 		}
+		return 0;
 	}
+	public function getCurrentLimit() // overall limit (base + credits)
+	{
+		$quota = $this->getQuota();
+		if($quota && isset($quota->credits))
+		{
+			return $this->getLimit() + $quota->credits;
+		}
+		return $this->getLimit();
+	}
+	public function getUsedQuota()
+	{
+		$quota = $this->getQuota();
+		if($quota && isset($quota->debits))
+		{
+			return $quota->debits;
+		}
+		return 0;
+	}
+
 
 	public function getQuota($index=0)
 	{
