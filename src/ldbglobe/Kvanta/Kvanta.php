@@ -4,11 +4,13 @@ namespace ldbglobe\Kvanta;
 class Kvanta {
 
 	public $db_handler = null;
+	public $table_base = null;
 	public $env_name = null;
 
-	public function __construct($db_handler,$env_name)
+	public function __construct($db_handler,$table_base,$env_name='')
 	{
 		$this->db_handler = $db_handler;
+		$this->table_base = $table_base;
 		$this->env_name = $env_name;
 
 		$this->init();
@@ -16,11 +18,12 @@ class Kvanta {
 
 	public function init()
 	{
-		$env_name = $this->env_name;
+		$table_base = $this->table_base;
 
-		if(!$this->table_exists($env_name.'_services'))
+		if(!$this->table_exists($table_base.'_services'))
 		{
-			$this->db_handler->query("CREATE TABLE `${env_name}_services` (
+			$this->db_handler->query("CREATE TABLE `${table_base}_services` (
+				`env` varchar(64) NOT NULL,
 				`code` varchar(64) NOT NULL,
 				`limit` int(11) NOT NULL,
 				`periodicity` varchar(32) NOT NULL,
@@ -29,17 +32,18 @@ class Kvanta {
 				`active` tinyint(1) NOT NULL,
 				`history` text NOT NULL,
 				`history_time` datetime DEFAULT NULL,
-				PRIMARY KEY (`code`)
+				PRIMARY KEY (`env`,`code`)
 			);");
 		}
-		if(!$this->table_exists($env_name.'_transactions'))
+		if(!$this->table_exists($table_base.'_transactions'))
 		{
-			$this->db_handler->query("CREATE TABLE `${env_name}_transactions` (
+			$this->db_handler->query("CREATE TABLE `${table_base}_transactions` (
+				`env` varchar(64) NOT NULL,
 				`code` varchar(64) NOT NULL,
 				`cdate` datetime NOT NULL,
 				`quantity` int(11) NOT NULL,
 				`utime` decimal(16,6) NOT NULL,
-				PRIMARY KEY (`code`,`utime`) USING BTREE
+				PRIMARY KEY (`env`,`code`,`utime`) USING BTREE
 			);");
 		}
 		
@@ -63,9 +67,11 @@ class Kvanta {
 
 	public function create($code,$limit,$periodicity) // yearly, monthly, daily, hourly
 	{
+		$table_base = $this->table_base;
 		$env_name = $this->env_name;
 
-		$db_statement = $this->db_handler->prepare("INSERT INTO `${env_name}_services` SET
+		$db_statement = $this->db_handler->prepare("INSERT INTO `${table_base}_services` SET
+			`env`=:_env,
 			`code`=:_code,
 			`limit`=:_limit,
 			`periodicity`=:_periodicity,
@@ -75,6 +81,7 @@ class Kvanta {
 			`history`=\"\"
 		;");
 		$db_statement->execute(array(
+			'_env'=>$env_name,
 			'_code'=>$code,
 			'_limit'=>$limit,
 			'_periodicity'=>$periodicity,
@@ -115,6 +122,10 @@ class Kvanta_Services {
 		return $this->kvanta_instance->db_handler;
 	}
 
+	private function _table_base()
+	{
+		return $this->kvanta_instance->table_base;
+	}
 	private function _env_name()
 	{
 		return $this->kvanta_instance->env_name;
@@ -122,10 +133,12 @@ class Kvanta_Services {
 
 	public function init()
 	{
+		$table_base = $this->_table_base();
 		$env_name = $this->_env_name();
 		$code = $this->code;
+
 		try {
-			$result = $this->_db_handler()->query("SELECT * FROM `${env_name}_services` WHERE `code`=\"${code}\"");
+			$result = $this->_db_handler()->query("SELECT * FROM `${table_base}_services` WHERE `env`=\"${env_name}\" AND `code`=\"${code}\"");
 		} catch (\Exception $e) {
 			$result = FALSE;
 		}
@@ -159,13 +172,16 @@ class Kvanta_Services {
 	}
 	public function setLimit($v)
 	{
+		$table_base = $this->_table_base();
 		$env_name = $this->_env_name();
 		$code = $this->code;
+
 		try {
-			$db_statement = $this->_db_handler()->prepare("UPDATE `${env_name}_services` SET `limit`=:v, `mdate`=NOW() WHERE `code`=:_code");
+			$db_statement = $this->_db_handler()->prepare("UPDATE `${table_base}_services` SET `limit`=:v, `mdate`=NOW() WHERE `env`=:_env AND `code`=:_code");
 			$db_statement->execute(array(
 				'v'=>$v,
-				'_code'=>$code
+				'_env'=>$env_name,
+				'_code'=>$code,
 			));
 			$this->init();
 			$this->clearHistory();
@@ -176,13 +192,16 @@ class Kvanta_Services {
 	}
 	public function setPeriodicity($v)
 	{
+		$table_base = $this->_table_base();
 		$env_name = $this->_env_name();
 		$code = $this->code;
+
 		try {
-			$db_statement = $this->_db_handler()->prepare("UPDATE `${env_name}_services` SET `periodicity`=:v, `mdate`=NOW() WHERE `code`=:_code");
+			$db_statement = $this->_db_handler()->prepare("UPDATE `${table_base}_services` SET `periodicity`=:v, `mdate`=NOW() WHERE `env`=:_env AND `code`=:_code");
 			$db_statement->execute(array(
 				'v'=>$v,
-				'_code'=>$code
+				'_env'=>$env_name,
+				'_code'=>$code,
 			));
 			$this->init();
 			$this->clearHistory();
@@ -194,14 +213,17 @@ class Kvanta_Services {
 
 	public function removeQuota($quantity,$time=null)
 	{
+		$table_base = $this->_table_base();
 		$env_name = $this->_env_name();
 		$code = $this->code;
+
 		try {
 			$cdate = $time ? '"'.date('Y-m-d H:i:s',$time).'"':'NOW()';
-			$db_statement = $this->_db_handler()->prepare("INSERT INTO `${env_name}_transactions` SET `quantity`=:_quantity, `cdate`=${cdate}, `code`=:_code, `utime`=UNIX_TIMESTAMP(NOW(6))");
+			$db_statement = $this->_db_handler()->prepare("INSERT INTO `${table_base}_transactions` SET `quantity`=:_quantity, `cdate`=${cdate}, `env`=:_env,`code`=:_code, `utime`=UNIX_TIMESTAMP(NOW(6))");
 			$db_statement->execute(array(
 				'_quantity'=>-(abs($quantity)),
-				'_code'=>$code
+				'_env'=>$env_name,
+				'_code'=>$code,
 			));
 			return true;
 		} catch (\Exception $e) {
@@ -211,14 +233,17 @@ class Kvanta_Services {
 
 	public function addQuota($quantity,$time=null)
 	{
+		$table_base = $this->_table_base();
 		$env_name = $this->_env_name();
 		$code = $this->code;
+
 		try {
 			$cdate = $time ? '"'.date('Y-m-d H:i:s',$time).'"':'NOW()';
-			$db_statement = $this->_db_handler()->prepare("INSERT INTO `${env_name}_transactions` SET `quantity`=:_quantity, `cdate`=${cdate}, `code`=:_code, `utime`=UNIX_TIMESTAMP(NOW(6))");
+			$db_statement = $this->_db_handler()->prepare("INSERT INTO `${table_base}_transactions` SET `quantity`=:_quantity, `cdate`=${cdate}, `env`=:_env, `code`=:_code, `utime`=UNIX_TIMESTAMP(NOW(6))");
 			$db_statement->execute(array(
 				'_quantity'=>abs($quantity),
-				'_code'=>$code
+				'_env'=>$env_name,
+				'_code'=>$code,
 			));
 			return true;
 		} catch (\Exception $e) {
@@ -228,12 +253,15 @@ class Kvanta_Services {
 
 	public function clearTransactions()
 	{
+		$table_base = $this->_table_base();
 		$env_name = $this->_env_name();
 		$code = $this->code;
+
 		try {
-			$db_statement = $this->_db_handler()->prepare("DELETE FROM `${env_name}_transactions` WHERE `code`=:_code");
+			$db_statement = $this->_db_handler()->prepare("DELETE FROM `${table_base}_transactions` WHERE `env`=:_env AND `code`=:_code");
 			$db_statement->execute(array(
-				'_code'=>$code
+				'_env'=>$env_name,
+				'_code'=>$code,
 			));
 			return true;
 		} catch (\Exception $e) {
@@ -318,6 +346,7 @@ class Kvanta_Services {
 	{
 		$period = array($from,$to);
 
+		$table_base = $this->_table_base();
 		$env_name = $this->_env_name();
 		$code = $this->code;
 
@@ -334,13 +363,15 @@ class Kvanta_Services {
 					SUM(Case When quantity > 0 Then 1 Else 0 End) AS credits_count,
 					SUM(Case When quantity < 0 Then quantity Else 0 End) AS debits,
 					SUM(Case When quantity < 0 Then 1 Else 0 End) AS debits_count
-				FROM 
-					`${env_name}_transactions`
-				WHERE 
-					`code`=:_code
+				FROM
+					`${table_base}_transactions`
+				WHERE
+					`env`=:_env
+					AND `code`=:_code
 					AND (`cdate` BETWEEN :_from AND :_to)
 			");
 			$result = $db_statement->execute(array(
+				'_env'=>$env_name,
 				'_code'=>$code,
 				'_from'=>$period[0],
 				'_to'=>$period[1],
@@ -390,12 +421,15 @@ class Kvanta_Services {
 
 	public function getHistory()
 	{
+		$table_base = $this->_table_base();
 		$env_name = $this->_env_name();
 		$code = $this->code;
+
 		try {
-			$db_statement = $this->_db_handler()->prepare("SELECT `history` FROM `${env_name}_services` WHERE `code`=:_code AND history_time > \"".date('Y-m-d H:i:s',time()-3600)."\"");
+			$db_statement = $this->_db_handler()->prepare("SELECT `history` FROM `${table_base}_services` WHERE `env`=:_env AND `code`=:_code AND history_time > \"".date('Y-m-d H:i:s',time()-3600)."\"");
 			$result =  $db_statement->execute(array(
-				'_code'=>$code
+				'_env'=>$env_name,
+				'_code'=>$code,
 			));
 			if(!$result)
 			{
@@ -442,13 +476,16 @@ class Kvanta_Services {
 			$history[] = $h;
 		}
 
+		$table_base = $this->_table_base();
 		$env_name = $this->_env_name();
 		$code = $this->code;
+
 		try {
-			$db_statement = $this->_db_handler()->prepare("UPDATE `${env_name}_services` SET `history`=:_history, `history_time`=NOW() WHERE `code`=:_code");
+			$db_statement = $this->_db_handler()->prepare("UPDATE `${table_base}_services` SET `history`=:_history, `history_time`=NOW() WHERE `env`=:_env AND `code`=:_code");
 			$db_statement->execute(array(
 				'_history'=>json_encode($history),
-				'_code'=>$code
+				'_env'=>$env_name,
+				'_code'=>$code,
 			));
 			return $history;
 		} catch (\Exception $e) {
@@ -458,12 +495,15 @@ class Kvanta_Services {
 
 	public function clearHistory()
 	{
+		$table_base = $this->_table_base();
 		$env_name = $this->_env_name();
 		$code = $this->code;
+
 		try {
-			$db_statement = $this->_db_handler()->prepare("UPDATE `${env_name}_services` SET `history`=\"\", `history_time`=NULL WHERE `code`=:_code");
+			$db_statement = $this->_db_handler()->prepare("UPDATE `${table_base}_services` SET `history`=\"\", `history_time`=NULL WHERE `env`=:_env AND `code`=:_code");
 			$db_statement->execute(array(
-				'_code'=>$code
+				'_env'=>$env_name,
+				'_code'=>$code,
 			));
 			return true;
 		} catch (\Exception $e) {
